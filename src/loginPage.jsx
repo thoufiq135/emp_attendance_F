@@ -35,45 +35,68 @@ if(response.status==401){
     return
 }
 if(response.status==200){
-  
     localStorage.setItem("LoginToken",data.Logintoken)
     navigator("/Dashboard")
 }
 }
-    return(
-       <>
-  <div className="h-[50vh] w-[30vw] bg-[#DCCFC0] mt-[150px] ml-[525px] rounded-2xl flex items-center justify-center">
-    <form className="flex flex-col gap-4 w-[80%]" onSubmit={submitValue}>
-      <label className="text-orange-600 font-bold">
-        Email
-      </label>
-      <input
-      onChange={(e)=>setEmail(e.target.value)}
-        className="border rounded-md p-2"
-        placeholder="******@stackenzo.com"
-        type="email"
-        required
-      />
-      <label className="text-orange-600 font-bold">
-        Password
-      </label>
-      <input
-      onChange={(e)=>setPassword(e.target.value)}
-        className="border rounded-md p-2"
-        placeholder="*******"
-        type="password"
-        required
-      />
-     <button
-  type="submit"
-  className="bg-orange-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-orange-700 transition duration-300"
-  onClick={submitValue}
->
-  Submit
-</button>
-    </form>
+    return (
+  <div className="min-h-screen bg-gradient-to-br from-orange-100 via-white to-orange-200 flex items-center justify-center px-4">
+    <div className="w-full max-w-md bg-white shadow-2xl rounded-3xl p-8">
+      <div className="flex flex-col items-center mb-8">
+        <h1 className="text-3xl font-bold text-orange-600">
+          Stackenzo
+        </h1>
+        <p className="text-gray-500 mt-2 text-center">
+          Employee Attendance Management System
+        </p>
+      </div>
+
+      <form className="flex flex-col gap-5" onSubmit={submitValue}>
+        <div>
+          <label className="block text-orange-600 font-semibold mb-2">
+            Email
+          </label>
+          <input
+            onChange={(e) => setEmail(e.target.value)}
+            className="w-full border border-gray-300 rounded-xl p-3 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-200 transition"
+            placeholder="******@stackenzo.com"
+            type="email"
+            required
+          />
+        </div>
+
+        <div>
+          <label className="block text-orange-600 font-semibold mb-2">
+            Password
+          </label>
+          <input
+            onChange={(e) => setPassword(e.target.value)}
+            className="w-full border border-gray-300 rounded-xl p-3 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-200 transition"
+            placeholder="********"
+            type="password"
+            required
+          />
+        </div>
+
+        {error && (
+          <div className="bg-red-100 text-red-600 rounded-lg p-3 text-center">
+            {error.message}
+          </div>
+        )}
+
+        <button
+          type="submit"
+          className="bg-orange-600 text-white p-3 rounded-xl font-bold text-lg hover:bg-orange-700 transition duration-300 shadow-lg"
+        >
+          Login
+        </button>
+      </form>
+
+      <div className="mt-8 text-center text-sm text-gray-500">
+        © {new Date().getFullYear()} Stackenzo. All rights reserved.
+      </div>
+    </div>
   </div>
-</>
-    )
+);
 }
 export default Loginpage;
