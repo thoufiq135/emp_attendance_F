@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Navigate, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 function Loginpage(){
     const navigator=useNavigate()
   const[error,setError]=useState("")
@@ -35,6 +35,8 @@ if(response.status==401){
     return
 }
 if(response.status==200){
+  
+    localStorage.setItem("LoginToken",data.Logintoken)
     navigator("/Dashboard")
 }
 }
