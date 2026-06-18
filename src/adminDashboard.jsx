@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 
-const API_URL = "https://emp.stackenzo.com/api/fill/getAttendanceAdmin";
+const API_URL = "https://emp-backend.stackenzo.com/api/fill/getAttendanceAdmin";
 
 const FILTERS = [
   { label: "Today", value: "today" },
