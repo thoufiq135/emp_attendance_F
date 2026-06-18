@@ -76,7 +76,7 @@ setdata(head)
   async function getNotifications() {
     try {
       setLoading(true);
-const token=localStorage.get("LoginToken")
+const token=localStorage.getItem("LoginToken")
       const response = await fetch(
         "https://emp-backend.stackenzo.com/api/notifications/getNotifications",{
             method: "GET",
