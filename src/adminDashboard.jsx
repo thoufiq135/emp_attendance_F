@@ -1,6 +1,14 @@
 import { useState, useEffect } from "react";
-
+import { jwtDecode } from "jwt-decode";
 const API_URL = "https://emp-backend.stackenzo.com/api/fill/getAttendanceAdmin";
+const APPROVE_URL = "https://emp-backend.stackenzo.com/api/fill/approveOutside";
+// const API_URL = "http://localhost:3002/api/fill/getAttendanceAdmin";
+// const APPROVE_URL = "http://localhost:3002/api/fill/approveOutside";
+
+// ── Replace with your actual headId source (auth context / localStorage / JWT) ──
+const HEAD_token = localStorage.getItem("LoginToken") || "";
+
+const head_Id=jwtDecode(HEAD_token)
 
 const FILTERS = [
   { label: "Today", value: "today" },
@@ -19,28 +27,27 @@ const DEPT_COLORS = [
 ];
 
 function getInitials(name = "") {
-  return name.split(" ").map((w) => w[0]).join("").toUpperCase().slice(0, 2);
+  return name
+    .split(" ")
+    .map((w) => w[0])
+    .join("")
+    .toUpperCase()
+    .slice(0, 2);
 }
 
-function computeEffectiveHours(attendance) {
-  let totalMinutes = 0;
+function computeEffectiveMinutes(attendance) {
+  let total = 0;
   for (const rec of attendance) {
     if (!rec.total_hours) continue;
     const match = rec.total_hours.match(/(\d+)h\s(\d+)m/);
     if (!match) continue;
     const mins = parseInt(match[1]) * 60 + parseInt(match[2]);
-
-    // If outside but not approved → deduct those hours (treat as 0 for that day)
     const inPenalty = rec.In_time_outside && !rec.In_time_approved;
     const outPenalty = rec.Out_time_outside && !rec.Out_time_approved;
-
-    if (inPenalty || outPenalty) {
-      // Don't count unapproved outside days
-      continue;
-    }
-    totalMinutes += mins;
+    if (inPenalty || outPenalty) continue;
+    total += mins;
   }
-  return totalMinutes;
+  return total;
 }
 
 function formatMinutes(mins) {
@@ -48,14 +55,103 @@ function formatMinutes(mins) {
   return `${Math.floor(mins / 60)}h ${mins % 60}m`;
 }
 
+// ── StatusBadge ───────────────────────────────────────────────────────────────
 function StatusBadge({ outside, approved }) {
-  if (!outside) return <span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 font-medium">Office</span>;
-  if (approved) return <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-medium">Outside ✓</span>;
-  return <span className="text-xs px-2 py-0.5 rounded-full bg-rose-100 text-rose-600 font-medium">Outside ✗</span>;
+  if (!outside)
+    return (
+      <span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 font-medium whitespace-nowrap">
+        Office
+      </span>
+    );
+  if (approved)
+    return (
+      <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-medium whitespace-nowrap">
+        Outside ✓
+      </span>
+    );
+  return (
+    <span className="text-xs px-2 py-0.5 rounded-full bg-rose-100 text-rose-600 font-medium whitespace-nowrap">
+      Outside ✗
+    </span>
+  );
 }
 
-function AttendanceRow({ rec, index }) {
+// ── ApproveButtons ────────────────────────────────────────────────────────────
+function ApproveButtons({ rec, type, employeeId, onDone }) {
+  const [loading, setLoading] = useState(false);
+
+  const approvedField = type === "In_Time" ? "In_time_approved" : "Out_time_approved";
+  const outsideField = type === "In_Time" ? "In_time_outside" : "Out_time_outside";
+  const label = type === "In_Time" ? "In" : "Out";
+
+  if (!rec[outsideField] || rec[approvedField]) return null;
+
+  const call = async (action) => {
+    if (!HEAD_token) {
+      alert("Head ID not found. Please check your auth setup.");
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await fetch(APPROVE_URL, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          attendanceId: rec._id,
+          employeeId,               // ← comes from member_id, not rec
+          type,
+          action,
+          headId: head_Id.id,
+          NotificationId: rec.notificationId || undefined,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.message || "Request failed");
+      onDone(rec._id, type, action === "approve");
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <span className="inline-flex gap-1.5">
+      <button
+        disabled={loading}
+        onClick={(e) => {
+          e.stopPropagation();
+          call("approve");
+        }}
+        className="text-xs px-2 py-0.5 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-700 font-semibold hover:bg-emerald-100 disabled:opacity-40 transition-colors whitespace-nowrap"
+      >
+        {loading ? "…" : `Approve ${label}`}
+      </button>
+      <button
+        disabled={loading}
+        onClick={(e) => {
+          e.stopPropagation();
+          call("reject");
+        }}
+        className="text-xs px-2 py-0.5 rounded-lg border border-rose-300 bg-rose-50 text-rose-600 font-semibold hover:bg-rose-100 disabled:opacity-40 transition-colors whitespace-nowrap"
+      >
+        {loading ? "…" : `Reject ${label}`}
+      </button>
+    </span>
+  );
+}
+
+// ── AttendanceRow ─────────────────────────────────────────────────────────────
+function AttendanceRow({ rec: initialRec, index, employeeId, onApprovalChange }) {
   const [expanded, setExpanded] = useState(false);
+  const [rec, setRec] = useState(initialRec);
+
+  const handleDone = (id, type, approved) => {
+    const field = type === "In_Time" ? "In_time_approved" : "Out_time_approved";
+    setRec((prev) => ({ ...prev, [field]: approved }));
+    onApprovalChange?.(id, type, approved);
+  };
+
   const isPenalized =
     (rec.In_time_outside && !rec.In_time_approved) ||
     (rec.Out_time_outside && !rec.Out_time_approved);
@@ -63,67 +159,87 @@ function AttendanceRow({ rec, index }) {
   return (
     <>
       <tr
-        className={`border-b border-slate-100 cursor-pointer transition-colors hover:bg-slate-50/80 ${isPenalized ? "bg-rose-50/40" : ""}`}
+        className={`border-b border-slate-100 cursor-pointer transition-colors hover:bg-slate-50/80 ${
+          isPenalized ? "bg-rose-50/40" : ""
+        }`}
         onClick={() => setExpanded((p) => !p)}
       >
         <td className="py-3 px-4 text-sm text-slate-500 font-medium">{index + 1}</td>
-        <td className="py-3 px-4 text-sm font-semibold text-slate-700">{rec.date}</td>
-        <td className="py-3 px-4 text-sm text-slate-600">{rec.In_Time || "—"}</td>
-        <td className="py-3 px-4 text-sm text-slate-600">{rec.Out_time || "—"}</td>
-        <td className="py-3 px-4">
-          <StatusBadge outside={rec.In_time_outside} approved={rec.In_time_approved} />
+        <td className="py-3 px-4 text-sm font-semibold text-slate-700 whitespace-nowrap">
+          {rec.date}
         </td>
-        <td className="py-3 px-4">
-          <StatusBadge outside={rec.Out_time_outside} approved={rec.Out_time_approved} />
+        <td className="py-3 px-4 text-sm text-slate-600 whitespace-nowrap">
+          {rec.In_Time || "—"}
         </td>
+        <td className="py-3 px-4 text-sm text-slate-600 whitespace-nowrap">
+          {rec.Out_time || "—"}
+        </td>
+
+        {/* In status + approve */}
         <td className="py-3 px-4">
-          <span className={`text-sm font-bold ${isPenalized ? "text-rose-400 line-through" : "text-violet-700"}`}>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <StatusBadge outside={rec.In_time_outside} approved={rec.In_time_approved} />
+            <ApproveButtons rec={rec} type="In_Time" employeeId={employeeId} onDone={handleDone} />
+          </div>
+        </td>
+
+        {/* Out status + approve */}
+        <td className="py-3 px-4">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <StatusBadge outside={rec.Out_time_outside} approved={rec.Out_time_approved} />
+            <ApproveButtons rec={rec} type="Out_time" employeeId={employeeId} onDone={handleDone} />
+          </div>
+        </td>
+
+        <td className="py-3 px-4">
+          <span
+            className={`text-sm font-bold ${
+              isPenalized ? "text-rose-400 line-through" : "text-violet-700"
+            }`}
+          >
             {rec.total_hours || "—"}
           </span>
-          {isPenalized && <span className="ml-2 text-xs text-rose-500 font-medium">Not counted</span>}
+          {isPenalized && (
+            <span className="ml-2 text-xs text-rose-500 font-medium">Not counted</span>
+          )}
         </td>
-        <td className="py-3 px-4 text-slate-400 text-xs">{expanded ? "▲" : "▼"}</td>
+
+        <td className="py-3 px-4 text-slate-400 text-xs select-none">
+          {expanded ? "▲" : "▼"}
+        </td>
       </tr>
+
+      {/* Expanded detail */}
       {expanded && (
         <tr className="bg-slate-50 border-b border-slate-100">
           <td colSpan={8} className="px-6 py-4">
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
               {rec.In_Time_reason && (
-                <div className="bg-white rounded-xl p-3 shadow-sm border border-slate-100">
-                  <p className="text-xs text-slate-400 mb-1 font-medium uppercase tracking-wide">In Reason</p>
-                  <p className="text-slate-700">{rec.In_Time_reason}</p>
-                </div>
+                <DetailCard label="In Reason" value={rec.In_Time_reason} />
               )}
               {rec.delay_in_reason && (
-                <div className="bg-white rounded-xl p-3 shadow-sm border border-slate-100">
-                  <p className="text-xs text-slate-400 mb-1 font-medium uppercase tracking-wide">Delay Reason</p>
-                  <p className="text-slate-700">{rec.delay_in_reason}</p>
-                </div>
+                <DetailCard label="Delay Reason" value={rec.delay_in_reason} />
               )}
               {rec.Out_time_reason && (
-                <div className="bg-white rounded-xl p-3 shadow-sm border border-slate-100">
-                  <p className="text-xs text-slate-400 mb-1 font-medium uppercase tracking-wide">Out Reason</p>
-                  <p className="text-slate-700">{rec.Out_time_reason}</p>
-                </div>
+                <DetailCard label="Out Reason" value={rec.Out_time_reason} />
               )}
               {rec.Todays_Task && (
-                <div className="bg-white rounded-xl p-3 shadow-sm border border-slate-100">
-                  <p className="text-xs text-slate-400 mb-1 font-medium uppercase tracking-wide">Task</p>
-                  <p className="text-slate-700">{rec.Todays_Task}</p>
-                </div>
+                <DetailCard label="Task" value={rec.Todays_Task} />
               )}
               {rec.reason_for_task_delay && (
-                <div className="bg-white rounded-xl p-3 shadow-sm border border-slate-100">
-                  <p className="text-xs text-slate-400 mb-1 font-medium uppercase tracking-wide">Task Delay</p>
-                  <p className="text-slate-700">{rec.reason_for_task_delay}</p>
-                </div>
+                <DetailCard label="Task Delay" value={rec.reason_for_task_delay} />
               )}
               {rec.remarks && (
-                <div className="bg-white rounded-xl p-3 shadow-sm border border-slate-100">
-                  <p className="text-xs text-slate-400 mb-1 font-medium uppercase tracking-wide">Remarks</p>
-                  <p className="text-slate-700">{rec.remarks}</p>
-                </div>
+                <DetailCard label="Remarks" value={rec.remarks} />
               )}
+              {!rec.In_Time_reason &&
+                !rec.delay_in_reason &&
+                !rec.Out_time_reason &&
+                !rec.Todays_Task &&
+                !rec.reason_for_task_delay &&
+                !rec.remarks && (
+                  <p className="text-slate-400 text-sm col-span-3">No additional details.</p>
+                )}
             </div>
           </td>
         </tr>
@@ -132,11 +248,22 @@ function AttendanceRow({ rec, index }) {
   );
 }
 
-function MemberCard({ member, colorClass, index }) {
-  const [open, setOpen] = useState(false);
-  const { member_info, attendance, total_days, total_hours } = member;
+function DetailCard({ label, value }) {
+  return (
+    <div className="bg-white rounded-xl p-3 shadow-sm border border-slate-100">
+      <p className="text-xs text-slate-400 mb-1 font-medium uppercase tracking-wide">{label}</p>
+      <p className="text-slate-700">{value}</p>
+    </div>
+  );
+}
 
-  const effectiveMins = computeEffectiveHours(attendance);
+// ── MemberCard ────────────────────────────────────────────────────────────────
+function MemberCard({ member: initialMember, colorClass }) {
+  const [open, setOpen] = useState(false);
+  const [attendance, setAttendance] = useState(initialMember.attendance);
+  const { member_info, total_days, total_hours } = initialMember;
+
+  const effectiveMins = computeEffectiveMinutes(attendance);
   const effectiveHours = formatMinutes(effectiveMins);
 
   const approvedDays = attendance.filter(
@@ -146,12 +273,22 @@ function MemberCard({ member, colorClass, index }) {
   ).length;
   const unapprovedDays = total_days - approvedDays;
 
+  const handleApprovalChange = (id, type, approved) => {
+    setAttendance((prev) =>
+      prev.map((r) => {
+        if (r._id !== id) return r;
+        const field = type === "In_Time" ? "In_time_approved" : "Out_time_approved";
+        return { ...r, [field]: approved };
+      })
+    );
+  };
+
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden transition-all duration-200 hover:shadow-md">
-      {/* Card Header */}
+      {/* Header */}
       <div className={`bg-gradient-to-r ${colorClass} p-5`}>
         <div className="flex items-center gap-4">
-          <div className="w-12 h-12 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center text-white font-bold text-lg shadow-inner">
+          <div className="w-12 h-12 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center text-white font-bold text-lg shadow-inner shrink-0">
             {getInitials(member_info?.Name)}
           </div>
           <div className="flex-1 min-w-0">
@@ -169,47 +306,64 @@ function MemberCard({ member, colorClass, index }) {
         </div>
       </div>
 
-      {/* Stats Row */}
+      {/* Stats */}
       <div className="grid grid-cols-3 divide-x divide-slate-100 border-b border-slate-100">
-        <div className="p-4 text-center">
-          <p className="text-2xl font-black text-slate-800">{total_days}</p>
-          <p className="text-xs text-slate-400 font-medium mt-0.5">Days Present</p>
-        </div>
-        <div className="p-4 text-center">
-          <p className="text-2xl font-black text-violet-600">{effectiveHours}</p>
-          <p className="text-xs text-slate-400 font-medium mt-0.5">Effective Hours</p>
-        </div>
-        <div className="p-4 text-center">
-          <p className={`text-2xl font-black ${unapprovedDays > 0 ? "text-rose-500" : "text-emerald-500"}`}>
-            {unapprovedDays}
-          </p>
-          <p className="text-xs text-slate-400 font-medium mt-0.5">Unapproved Days</p>
-        </div>
+        <StatCell value={total_days} label="Days Present" color="text-slate-800" />
+        <StatCell value={effectiveHours} label="Effective Hours" color="text-violet-600" />
+        <StatCell
+          value={unapprovedDays}
+          label="Unapproved Days"
+          color={unapprovedDays > 0 ? "text-rose-500" : "text-emerald-500"}
+        />
       </div>
 
-      {/* Toggle Button */}
+      {/* Toggle */}
       <button
         onClick={() => setOpen((p) => !p)}
         className="w-full flex items-center justify-between px-5 py-3 text-sm font-semibold text-slate-600 hover:bg-slate-50 transition-colors"
       >
         <span>View Attendance Records ({total_days})</span>
-        <span className={`transition-transform duration-200 ${open ? "rotate-180" : ""}`}>▼</span>
+        <span
+          className={`transition-transform duration-200 ${open ? "rotate-180" : ""}`}
+        >
+          ▼
+        </span>
       </button>
 
-      {/* Attendance Table */}
+      {/* Table */}
       {open && (
         <div className="overflow-x-auto border-t border-slate-100">
-          <table className="w-full text-left min-w-[640px]">
+          <table className="w-full text-left min-w-[780px]">
             <thead>
               <tr className="bg-slate-50 border-b border-slate-100">
-                {["#", "Date", "In Time", "Out Time", "In Status", "Out Status", "Hours", ""].map((h) => (
-                  <th key={h} className="py-2.5 px-4 text-xs font-bold text-slate-400 uppercase tracking-wider">{h}</th>
+                {[
+                  "#",
+                  "Date",
+                  "In Time",
+                  "Out Time",
+                  "In Status",
+                  "Out Status",
+                  "Hours",
+                  "",
+                ].map((h) => (
+                  <th
+                    key={h}
+                    className="py-2.5 px-4 text-xs font-bold text-slate-400 uppercase tracking-wider whitespace-nowrap"
+                  >
+                    {h}
+                  </th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {attendance.map((rec, i) => (
-                <AttendanceRow key={rec._id} rec={rec} index={i} />
+                <AttendanceRow
+                  key={rec._id}
+                  rec={rec}
+                  index={i}
+                  employeeId={initialMember.member_id}   // ← the fix
+                  onApprovalChange={handleApprovalChange}
+                />
               ))}
             </tbody>
           </table>
@@ -219,6 +373,16 @@ function MemberCard({ member, colorClass, index }) {
   );
 }
 
+function StatCell({ value, label, color }) {
+  return (
+    <div className="p-4 text-center">
+      <p className={`text-2xl font-black ${color}`}>{value}</p>
+      <p className="text-xs text-slate-400 font-medium mt-0.5">{label}</p>
+    </div>
+  );
+}
+
+// ── AdminDashboard ────────────────────────────────────────────────────────────
 function AdminDashboard() {
   const [filter, setFilter] = useState("today");
   const [data, setData] = useState(null);
@@ -247,7 +411,11 @@ function AdminDashboard() {
     fetchData();
   }, [filter]);
 
-  const overallEffectiveMins = data?.members?.reduce((acc, m) => acc + computeEffectiveHours(m.attendance), 0) ?? 0;
+  const overallEffectiveMins =
+    data?.members?.reduce(
+      (acc, m) => acc + computeEffectiveMinutes(m.attendance),
+      0
+    ) ?? 0;
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans">
@@ -255,10 +423,13 @@ function AdminDashboard() {
       <div className="sticky top-0 z-30 bg-white/80 backdrop-blur-md border-b border-slate-200 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>
-            <h1 className="text-xl font-black text-slate-900 tracking-tight">Attendance Overview</h1>
-            <p className="text-slate-400 text-sm mt-0.5">Track your team's working hours</p>
+            <h1 className="text-xl font-black text-slate-900 tracking-tight">
+              Attendance Overview
+            </h1>
+            <p className="text-slate-400 text-sm mt-0.5">
+              Track your team's working hours
+            </p>
           </div>
-          {/* Filter Pills */}
           <div className="flex gap-2 p-1 bg-slate-100 rounded-xl">
             {FILTERS.map((f) => (
               <button
@@ -285,9 +456,17 @@ function AdminDashboard() {
               { label: "Total Members", value: data.total_members, icon: "👥", color: "text-violet-600" },
               { label: "Total Records", value: data.total_records, icon: "📋", color: "text-blue-600" },
               { label: "Logged Hours", value: data.overall_total_hours, icon: "⏱️", color: "text-amber-600" },
-              { label: "Effective Hours", value: formatMinutes(overallEffectiveMins), icon: "✅", color: "text-emerald-600" },
+              {
+                label: "Effective Hours",
+                value: formatMinutes(overallEffectiveMins),
+                icon: "✅",
+                color: "text-emerald-600",
+              },
             ].map((s) => (
-              <div key={s.label} className="bg-white rounded-2xl p-5 border border-slate-100 shadow-sm flex items-center gap-4">
+              <div
+                key={s.label}
+                className="bg-white rounded-2xl p-5 border border-slate-100 shadow-sm flex items-center gap-4"
+              >
                 <span className="text-2xl">{s.icon}</span>
                 <div>
                   <p className={`text-xl font-black ${s.color}`}>{s.value}</p>
@@ -328,7 +507,6 @@ function AdminDashboard() {
                 key={member.member_id}
                 member={member}
                 colorClass={DEPT_COLORS[i % DEPT_COLORS.length]}
-                index={i}
               />
             ))}
           </div>
